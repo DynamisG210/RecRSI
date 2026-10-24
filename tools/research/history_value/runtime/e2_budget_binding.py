@@ -22,7 +22,8 @@ def read_budget(identity=None):
     allocation=json.loads(allocation_path.read_text())
     if allocation['allocation_id'] not in ('history_value_same_incumbent_pair_20261024_v1',
                                          'history_value_same_incumbent_pair_20261024_v2',
-                                         'history_value_same_incumbent_v2_round14_20261024_phase2'):
+                                         'history_value_same_incumbent_v2_round14_20261024_phase2',
+                                         'history_value_same_incumbent_v2_round15_20261024_phase3'):
         raise ValueError('Wrong independent allocation')
     who=data['consumer']
     if allocation['allocation_id'] != 'history_value_same_incumbent_pair_20261024_v1':

@@ -18,7 +18,8 @@ def prepare(old, allocation_path, output, remote, credential):
     allocation = read(allocation_path)
     if allocation['allocation_id'] not in ('history_value_same_incumbent_pair_20261024_v1',
                                          'history_value_same_incumbent_pair_20261024_v2',
-                                         'history_value_same_incumbent_v2_round14_20261024_phase2'):
+                                         'history_value_same_incumbent_v2_round14_20261024_phase2',
+                                         'history_value_same_incumbent_v2_round15_20261024_phase3'):
         raise ValueError('Wrong allocation')
     seed = allocation.get('search_seed', 762001)
     prefix = allocation.get('campaign_prefix', 'history-value-b01-after12')
