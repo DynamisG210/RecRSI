@@ -2,17 +2,19 @@
 
 **Mechanism-Guided Discovery of Recommendation Algorithms**
 
-RecRSI organizes recommendation research around mechanism hypotheses. It constructs an explicit mechanism space, implements and evaluates candidate algorithms, and uses mechanism-linked experimental feedback to guide the next research decision.
+RecRSI is an LLM-agent framework for discovering better recommendation algorithms. Given a starting model, a dataset, and an experiment budget, it proposes changes, implements candidate algorithms, and tests them through training and evaluation.
 
-1. **MechSpace** identifies design choices and composition relations from the starting model and research literature.
-2. **Research Line** develops hypotheses, constructs candidate programs, and selects experiments.
-3. **Mechanism Feedback** connects measured outcomes to the design choices and evidence used in subsequent proposals.
+The search is organized around **mechanism hypotheses**: what to change, why it might help, and what the experiment should show.
 
-The default task is SASRec on Amazon CDs and Vinyl. Pairwise graph recommenders use the `recbole-graph-fixed100-v1` adapter.
+- **MechSpace** builds a task-specific mechanism space from the starting model and research literature.
+- **Research Line** develops hypotheses, implements candidates, and selects experiments.
+- **Mechanism Feedback** connects experimental results to the tested hypotheses to guide the next round.
 
-## Install and try
+The default research task is SASRec on Amazon CDs and Vinyl. For graph recommenders, see the [task format](docs/task-format.md).
 
-Download or clone this repository, open its root directory, and use Python 3.10–3.11. The pinned RecBole/Ray training dependencies support these Python versions. This CPU example runs without an API key or GPU:
+## Quick start
+
+Download or clone this repository and run the following from its root directory with Python 3.10 or 3.11. This CPU example needs no API key or GPU:
 
 ```bash
 python3.10 -m venv .venv
@@ -24,34 +26,48 @@ python -m pip check
 recrsi demo --output ../recrsi-demo
 ```
 
-The example creates four synthetic user histories and a 120-item catalog, builds fixed candidate sets, trains SASRec for two epochs, evaluates NDCG@5 and Hit@5, and reloads the checkpoint to verify its scores. Read `../recrsi-demo/DEMO_RESULT.json` and `../recrsi-demo/baseline/worker/LEARNING_CURVE.jsonl`. The research loop below adds model-generated hypotheses, candidates, and feedback.
+The example trains SASRec for two epochs on a small synthetic dataset, evaluates NDCG@5 and Hit@5, and reloads the checkpoint. Results are in `../recrsi-demo/DEMO_RESULT.json`; learning curves are in `../recrsi-demo/baseline/worker/LEARNING_CURVE.jsonl`. This demonstrates training and evaluation, not the LLM-driven search described below.
 
 ## Run a research task
 
-Use a Linux x86-64 CUDA host for the research loop. Complete [host setup](docs/host-setup.md) before running generated candidates. For CUDA, install the training extra in a CUDA-capable environment rather than preinstalling the CPU-only PyTorch wheel above.
+Full research runs need a Linux x86-64 CUDA host and an LLM API endpoint. See [host setup](docs/host-setup.md) for CUDA installation, worker setup, and the required model IDs. Use a CUDA-enabled environment rather than the CPU-only PyTorch installation above.
+
+### 1. Create a project
 
 ```bash
 recrsi init --output ../my-research
 ```
 
-Edit `environment.json` to select the training interpreter, RecBole directory, NVIDIA libraries, shared resource-lock directory, four CPU cores, GPU UUID, and private API configuration. Edit `inputs/binding.json` to set the dataset name, model configuration, and training recipe. Put the four TRAIN/DEV/catalog files described in [task format](docs/task-format.md) in `../my-data/`. For the default task these are `cds.train.inter`, `cds.dev.inter`, `cds.user`, and `cds.item`.
+Fill in `../my-research/environment.json` following the host setup guide. Then edit `../my-research/inputs/binding.json` for your dataset, model, and training settings.
 
-For a new sequential task, start with a TSV containing `user_id`, `item_id`, and integer `timestamp` columns, then construct those files:
+### 2. Prepare data and literature
+
+For a new sequential task, start with a TSV containing `user_id`, `item_id`, and integer `timestamp` columns:
 
 ```bash
 recrsi split --interactions ../interactions.tsv --output ../my-data \
   --test-output ../heldout/cds.test.inter --dataset cds --max-length 50
 ```
 
-The splitter sorts each user's events by time, retains the first occurrence of each item, and uses the last two distinct items for DEV and TEST. Users with fewer than four distinct items are counted and omitted. `SPLIT.json` records the input hash and preprocessing counts. Existing frozen splits can be supplied directly. Match `MAX_ITEM_LIST_LENGTH` in the binding to `--max-length`.
+This creates `cds.train.inter`, `cds.dev.inter`, `cds.user`, and `cds.item` in `../my-data/`, with TEST saved separately. The splitter uses each user's last two distinct items for DEV and TEST and skips users with fewer than four distinct items. Match `MAX_ITEM_LIST_LENGTH` in the binding to `--max-length`. Existing splits can also be supplied in the documented [task format](docs/task-format.md).
 
-Create `../literature.json` with the research literature for your task:
+Create `../literature.json` with relevant papers and summaries, for example:
 
 ```json
-{"documents": [{"title": "Self-Attentive Sequential Recommendation", "year": 2018, "summary": "Self-attention models sequential item dependencies. Add the evidence relevant to your task here."}]}
+{
+  "documents": [
+    {
+      "title": "Self-Attentive Sequential Recommendation",
+      "year": 2018,
+      "summary": "Self-attention models sequential item dependencies."
+    }
+  ]
+}
 ```
 
-Run the following in the training environment so asset construction uses the same RecBole version as evaluation:
+### 3. Start the search
+
+Run these commands in the training environment:
 
 ```bash
 recrsi doctor --environment ../my-research/environment.json
@@ -64,30 +80,28 @@ recrsi inspect ../my-run
 recrsi run ../my-run
 ```
 
-`assets` obtains RecBole's actual token mapping and samples 99 fixed negatives per DEV target, excluding TRAIN interactions. `baseline` trains the starting model, verifies its checkpoint, and generates the results, physical cost ledger, and task facts used by search. A CPU baseline is available through `--device cpu`; its receipt records zero GPU time and measured elapsed time. Use the same selected training device and recipe across the comparisons you run.
+`assets` builds the item mapping and fixed evaluation candidates. `baseline` trains the starting model. The remaining commands check the setup, prepare a run directory, and start the hypothesis–experiment–feedback loop. A search allows up to 12 candidate evaluations by default; budget and repeat settings are described in [task format](docs/task-format.md).
 
-`check` validates data, source, baseline, protocol, and accounting identities. `prepare` captures the runtime and task configuration in a fresh directory. `inspect` checks controller assembly. `run` executes mechanism-space construction, research proposals, candidate qualification, training, evaluation, and feedback. Resume in the original directory with `recrsi run ../my-run --resume`.
-
-The method profile uses search seeds `41000 + repeat`, training seeds `51000 + repeat` (repeat 1–3), up to 36 research rounds, 12 candidate evaluations, 36 training admissions, and 7 reference USD shared by space construction and search. Model routing and accounting rates are recorded in the prepared configuration. The provider must expose `gpt-5.6-luna` and `gpt-5.6-terra`; see [host setup](docs/host-setup.md).
+To resume an interrupted run, use `recrsi run ../my-run --resume`. If `PAUSED.json` is present, check its message and the [troubleshooting guide](docs/host-setup.md#troubleshooting) first.
 
 ## Read the outputs
 
-Run outputs are under `my-run/task/research_line/runs/<run_id>/`:
+Results are saved under `../my-run/task/research_line/runs/<run_id>/`:
 
-- `RESULT.json`: terminal search result and retained frontier.
-- Candidate directories: exact source, qualification result, learning curves, checkpoint, and validation metrics.
-- MechSpace, hypothesis, selection, and feedback records: research decisions linked to observed outcomes.
-- API and GPU ledgers: requests, reference API cost, measured worker time, failures, and unresolved work.
-- `PAUSED.json`, when present: the saved condition requiring reconciliation before continuation.
+- `RESULT.json`: the final search result and retained candidates.
+- Candidate directories: source code, learning curves, checkpoints, and validation scores.
+- Research records: the mechanism space, hypotheses, experiment choices, feedback, and API/GPU usage.
 
-NDCG@5 and Hit@5 use fixed 100-item DEV candidate sets. Search uses TRAIN and DEV; keep TEST separate for final evaluation. Preserve all search repeats, including negative outcomes, when comparing discovery quality and cost.
+NDCG@5 and Hit@5 are evaluated on fixed 100-item DEV candidate sets. Search uses TRAIN and DEV; keep TEST separate for final evaluation.
 
-## Development and distribution
+## Development
+
+Run the tests with:
 
 ```bash
 python -m pytest tests -q
 ```
 
-Tests cover configuration, native CPU training/evaluation/checkpoint reload, response parsing, watchdog termination, and controller assembly. CI runs the suite and standalone example on Python 3.10 and 3.11.
+Further documentation: [task format](docs/task-format.md), [host setup](docs/host-setup.md), and [anonymous source export](docs/anonymous-release.md).
 
-See [task files](docs/task-format.md), [host setup](docs/host-setup.md), and [anonymous source export](docs/anonymous-release.md). Code is distributed under the [MIT license](LICENSE); [third-party notices](THIRD_PARTY_NOTICES.md) accompany the included SASRec implementation. The package and CLI are named `recrsi`.
+Released under the [MIT license](LICENSE). See [third-party notices](THIRD_PARTY_NOTICES.md) for the included SASRec implementation.
