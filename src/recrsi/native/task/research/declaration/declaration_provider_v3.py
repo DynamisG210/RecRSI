@@ -256,9 +256,11 @@ class DeclarationProvider:
         if not self.resources.admit_output():
             raise CompletionPending("Successful response cached; common output admission pending")
         envelope=json.loads(cached.read_bytes())
-        if envelope.get("status")!="completed" or envelope.get("model")!=self.model:
-            raise ValueError("Completion status/model identity differs")
+        if envelope.get("status") != "completed":
+            raise ValueError("Completion did not complete")
         from recclaw_core.experiments.helix_abc_v1.lab_api_broker import responses_final_text
+        from recclaw_core.experiments.helix_abc_v1.provider_model_routing import require_returned_model_identity
+        require_returned_model_identity(self.model, envelope.get("model"), wire_model=self.model)
         return json.loads(responses_final_text(envelope))
 
     def _record_infrastructure(self,call_id,physical,usage,status,error_type):

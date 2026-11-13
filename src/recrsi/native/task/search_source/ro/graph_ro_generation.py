@@ -26,6 +26,7 @@ def prepare(inputs):
     return root,contract,request
 
 def stage(name,request,root,settings,ledger,*,transport=None):
+    from recclaw_core.experiments.helix_abc_v1.provider_model_routing import require_returned_model_identity
     from auto_search_space import extract_responses_api_scientific_response
     from ro_main_provider import MainROTransport
     from se_shared_api_ledger import _load_route_credentials
@@ -53,8 +54,7 @@ def stage(name,request,root,settings,ledger,*,transport=None):
     body=json.loads(raw.read_bytes())
     if body.get('status') != 'completed':
         raise ValueError('AutoSpace response did not complete')
-    if body.get('model') not in ('gpt-5.6-terra','openai/gpt-5.6-terra'):
-        raise ValueError('Retain original output: unexpected generation model')
+    require_returned_model_identity(payload['model'], body.get('model'), wire_model=payload['model'])
     result=extract_responses_api_scientific_response(body)
     freeze(root/(name+'_RESPONSE.json'),result);method.validate(result,name.lower())
     return result

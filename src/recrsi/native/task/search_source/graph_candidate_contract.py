@@ -46,7 +46,7 @@ def qualify_source(source):
                     allowed = {'recbole.model.layers': {'TransformerEncoder'}, 'recbole.model.loss': {'BPRLoss'}}
                     if any(alias.name not in allowed[module] for alias in node.names):
                         raise ValueError('Only the declared model computation components may be imported')
-                elif module=='recbole.utils' and isinstance(node,ast.ImportFrom):
+                elif module in ('recbole.utils', 'recbole.utils.enum_type') and isinstance(node,ast.ImportFrom):
                     if any(alias.name!='InputType' for alias in node.names):
                         raise ValueError('Only InputType may be imported from recbole.utils')
                 elif module!='torch' and not any(module==root or module.startswith(root+'.') for root in ALLOWED_MODULES):

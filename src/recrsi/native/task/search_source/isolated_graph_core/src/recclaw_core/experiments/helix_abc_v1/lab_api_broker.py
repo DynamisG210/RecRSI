@@ -733,7 +733,7 @@ class LabApiCanaryBrokerV1:
             output_tokens=int(row["output_tokens"]),
             total_tokens=int(row["total_tokens"]),
             latency_ms=int(row["latency_ms"]),
-            returned_model=str(row["returned_model"]),
+            returned_model=row["returned_model"],
         )
 
     def replay_stored(
@@ -785,7 +785,7 @@ class LabApiCanaryBrokerV1:
             output_tokens=0,
             total_tokens=0,
             latency_ms=0,
-            returned_model=str(row["returned_model"]),
+            returned_model=row["returned_model"],
         )
 
     def sealed_request_identity(
@@ -1229,7 +1229,7 @@ class LabApiCanaryBrokerV1:
         expected_proposal_count: int,
         effective_ceiling: int,
         output_ceiling: int | None = None,
-    ) -> tuple[Mapping[str, Any], dict[str, int], str]:
+    ) -> tuple[Mapping[str, Any], dict[str, int], str | None]:
         effective_output_ceiling = (
             int(output_ceiling)
             if output_ceiling is not None
@@ -1353,9 +1353,12 @@ class LabApiCanaryBrokerV1:
                 usage=usage,
             )
         returned_model = envelope.get("model")
+        if wire_api == "responses" and returned_model is None:
+            return response, usage, None
         if not isinstance(returned_model, str) or not returned_model.strip():
             raise LabApiResponseContractError(
-                LabApiResponseFailureReasonV1.RETURNED_MODEL_TYPE_OR_EMPTY
+                LabApiResponseFailureReasonV1.RETURNED_MODEL_TYPE_OR_EMPTY,
+                usage=usage,
             )
         return response, usage, returned_model
 
@@ -1406,7 +1409,7 @@ class LabApiCanaryBrokerV1:
         *,
         logical_call_id: str,
         request_digest: str,
-        returned_model: str,
+        returned_model: str | None,
         usage: Mapping[str, int],
     ) -> None:
         """Persist content-free Responses reasoning usage for token-quality audit."""

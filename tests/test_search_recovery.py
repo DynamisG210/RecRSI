@@ -107,6 +107,50 @@ def test_autospace_resume_after_zero_send_and_after_paid_response(provider, monk
     assert len(sent) == 1
 
 
+def test_autospace_accepts_missing_model_metadata_and_rejects_conflict(provider, monkeypatch, tmp_path):
+    import graph_ro_generation as generation
+
+    settings, ledger, sent = provider
+    monkeypatch.setattr(generation.method, 'validate', lambda value, stage: None)
+    stage_root = tmp_path / 'autospace'
+    stage_root.mkdir()
+    raw = stage_root / 'CRITIC_RAW_RESPONSE.json'
+    envelope = {'status': 'completed', 'output': [{'type': 'message', 'content': [
+        {'type': 'output_text', 'text': '{"audits":[]}'}]}]}
+    raw.write_text(json.dumps(envelope))
+    assert generation.stage('CRITIC', {}, stage_root, settings, ledger) == {'audits': []}
+    envelope['model'] = 'wrong-model'
+    raw.write_text(json.dumps(envelope))
+    with pytest.raises(ValueError, match='returned_model differs'):
+        generation.stage('CRITIC', {}, stage_root, settings, ledger)
+    assert not sent
+
+
+def test_shared_effect_signature_is_reported_without_rejecting_distinct_encoders(runtime):
+    from graph_assembler_engine import novelty_signature, quality_report
+
+    primitives = []
+    for name, family in [('causal_conv', 'causal convolution'), ('gru', 'gated recurrence')]:
+        primitive = {
+            'primitive_id': name,
+            'mechanism_family': family,
+            'slot_id': 'MODEL_ARCHITECTURE_TRANSFORM',
+            'effect_phase': 'TRAIN_AND_INFERENCE',
+            'effect_path': {'operation_kind': 'encoder replacement', 'changed_quantity': 'sequence encoder',
+                            'baseline_anchor': {'path': 'candidate.py', 'symbol': 'forward', 'kind': 'method'}},
+            'parameter_schema': {'type': 'object', 'additionalProperties': False, 'properties': {}},
+            'runtime_reachability': {'statically_reachable': True},
+            'expected_effect_strength': 'HIGH',
+            'low_impact_risk': False,
+        }
+        primitive['novelty_signature'] = novelty_signature(primitive)
+        primitives.append(primitive)
+    design = {'effective_width_guard': {'minimum_legal_candidate_count': 1, 'minimum_retention_ratio': 0.5}}
+    report = quality_report(primitives, design)
+    assert report['legal_candidate_counts']['singles'] == 2
+    assert report['distinct_novelty_signature_count'] == 1
+
+
 def test_dispatch_identity_blocks_repeat_but_allows_distinct_calls(provider):
     from ro_main_provider import MainROTransport
     from resource_stop import SearchResourceStop
@@ -158,7 +202,7 @@ def test_broker_recovers_paid_bytes_and_charges_original_role_budget(provider, m
     content = '{"proposals":["fixture"]}' if schema_valid else '<think>fixture</think>{"proposals":[],"extra":1}'
     def respond(request):
         sent.append(request.content)
-        return httpx.Response(200, json={'model': 'gpt-5.6-terra', 'status': 'completed',
+        return httpx.Response(200, json={'status': 'completed',
             'output': [{'type': 'message', 'content': [
                 {'type': 'output_text', 'text': content}]}],
             'usage': {'input_tokens': 40, 'output_tokens': 12}})
@@ -188,6 +232,7 @@ def test_broker_recovers_paid_bytes_and_charges_original_role_budget(provider, m
     for replay in (recovered, cached):
         if schema_valid:
             assert replay.call.response == {'proposals': ['fixture']}
+            assert replay.call.returned_model is None
         else:
             assert replay.call is None
             assert replay.failure['failure_class'] == 'SCHEMA_VALIDATION_FAILURE'

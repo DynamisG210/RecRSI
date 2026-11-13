@@ -220,16 +220,21 @@ def returned_model_is_compatible(requested_model: str, returned_model: str) -> b
 
 def require_returned_model_identity(
     requested_model: str,
-    returned_model: str,
+    returned_model: str | None,
     *,
     wire_model: str | None = None,
 ) -> None:
-    """Validate the formal route and an explicitly configured wire alias."""
+    """Validate reported model metadata. Some Responses envelopes omit it."""
 
+    if returned_model is None:
+        return
+    if not isinstance(returned_model, str) or not returned_model.strip():
+        raise ValueError("Provider returned_model must be a nonempty string when reported")
+    normalized = returned_model.removeprefix("openai/")
     compatible = (
-        returned_model == wire_model
+        normalized == wire_model.removeprefix("openai/")
         if wire_model is not None
-        else returned_model_is_compatible(requested_model, returned_model)
+        else returned_model_is_compatible(requested_model, normalized)
     )
     if not compatible:
         raise ValueError(

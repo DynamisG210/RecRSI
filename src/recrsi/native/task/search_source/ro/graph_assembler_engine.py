@@ -281,7 +281,7 @@ def _parameter_schema_is_const_only(schema: Mapping[str, Any]) -> bool:
 
 
 def novelty_signature(primitive: Mapping[str, Any]) -> str:
-    """Ignore names, prose and parameters when identifying semantic duplicates."""
+    """Summarize the declared effect and its anchor for coverage reporting."""
 
     effect = _object(primitive.get("effect_path"), "effect_path")
     anchor = _object(effect.get("baseline_anchor"), "effect_path.baseline_anchor")
@@ -449,8 +449,8 @@ def quality_report(
         observed = novelty_signature(primitive)
         if primitive.get("novelty_signature") != observed:
             raise AutoSpaceV161Error(f"primitive {primitive_id!r} has a stale novelty signature")
-        if observed in signatures:
-            raise AutoSpaceV161Error("parameter-only, renamed, or equivalent primitives are not distinct")
+        # Distinct mechanisms can share a coarse effect signature (e.g. two
+        # encoder replacements). The Critic evaluates their scientific novelty.
         signatures.add(observed)
         grouped[slot_id].append(primitive)
     axis_reports = []

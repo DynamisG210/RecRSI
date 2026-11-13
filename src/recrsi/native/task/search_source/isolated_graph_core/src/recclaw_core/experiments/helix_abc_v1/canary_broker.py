@@ -81,7 +81,7 @@ class CanaryBrokerCallV1:
     output_tokens: int
     total_tokens: int
     latency_ms: int
-    returned_model: str
+    returned_model: str | None
 
     def to_dict(self) -> dict[str, Any]:
         return {

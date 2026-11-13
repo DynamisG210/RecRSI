@@ -14,7 +14,9 @@ def test_default_project_is_sasrec_cds(tmp_path):
     assert (binding['line'], binding['dataset']) == ('sasrec', 'cds')
     assert binding['root_source_sha256'] == sha(root/'inputs/root_source.py')
     contract = native_module('_seq_source_contract','task/search_source/graph_candidate_contract.py')
-    assert contract.qualify_source((root/'inputs/root_source.py').read_text())['status'] == 'ELIGIBLE_SOURCE'
+    source = (root/'inputs/root_source.py').read_text()
+    assert contract.qualify_source(source)['status'] == 'ELIGIBLE_SOURCE'
+    assert contract.qualify_source('from recbole.utils.enum_type import InputType\n' + source)['status'] == 'ELIGIBLE_SOURCE'
     assert (root/'inputs/RecBole-LICENSE.txt').is_file()
 
 

@@ -9,15 +9,18 @@ sys.path.insert(0, str(CORE))
 from recclaw_core.experiments.helix_abc_v1.lab_api_broker import (
     LabApiCanaryBrokerV1, LabApiResponseContractError,
 )
+from recclaw_core.experiments.helix_abc_v1.provider_model_routing import (
+    STRONG_MODEL, EFFICIENT_MODEL, require_returned_model_identity,
+)
 
 
-def parse(messages):
+def parse(messages, **metadata):
     broker = object.__new__(LabApiCanaryBrokerV1)
     broker.wire_api = "responses"
     broker.schema = {"type": "object", "required": ["proposals"]}
     return broker._parse_response(
         envelope={"status": "completed", "output": messages,
-                  "usage": {"input_tokens": 10, "output_tokens": 20}, "model": "fixture"},
+                  "usage": {"input_tokens": 10, "output_tokens": 20}, **metadata},
         expected_proposal_count=2, effective_ceiling=100,
     )
 
@@ -33,13 +36,23 @@ def message(phase=None):
 def test_explicit_final_excludes_commentary_and_preserves_usage():
     commentary = message("commentary")
     commentary["content"][0]["text"] = "not proposal JSON"
-    result, usage, model = parse([commentary, {"type": "reasoning"}, message("final_answer")])
+    result, usage, model = parse([commentary, {"type": "reasoning"}, message("final_answer")],
+                                 model="fixture")
     assert len(result["proposals"]) == 2
     assert usage["total_tokens"] == 30
+    assert model == "fixture"
 
 
 def test_legacy_single_message():
     assert len(parse([message()])[0]["proposals"]) == 2
+
+
+def test_omitted_model_metadata_stays_unknown():
+    assert parse([message()])[2] is None
+    require_returned_model_identity(STRONG_MODEL, None)
+    require_returned_model_identity(STRONG_MODEL, "openai/" + STRONG_MODEL)
+    with pytest.raises(ValueError, match="differs"):
+        require_returned_model_identity(STRONG_MODEL, EFFICIENT_MODEL)
 
 
 @pytest.mark.parametrize("messages", [
