@@ -52,11 +52,16 @@ from recrsi.cli import main
 
 prepared = Path(sys.argv[1])
 resume = sys.argv[2] == 'resume'
+sys.path.insert(0, str(prepared/'task/root_runtime'))
 sys.path.insert(0, str(prepared/'task/search_source/ro'))
 sys.path.insert(0, str(prepared/'task/search_source/isolated_graph_core/src'))
+import cpu_admission
 import graph_ro_generation
 from graph_autospace import normalized_space
 from recclaw_core.experiments.helix_abc_v1.lab_api_broker import LabApiCanaryBrokerV1
+# This fixture owns its lock directory. Host processes sharing the CI runner's
+# small affinity mask are unrelated to the resume behavior under test.
+cpu_admission.occupied_cpus = set
 graph_ro_generation.generate = lambda inputs, **kwargs: normalized_space({
     'search_space_id': 'fixture-space', 'family': {'family_id': 'fixture-family'},
     'primitive_registry': {'axes': []}, 'grammar': {'operators': []}, 'capability_policy': {},
