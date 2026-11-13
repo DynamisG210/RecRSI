@@ -17,7 +17,9 @@ class ContractBoundary:
     def require_new_request(self):
         from resource_stop import SearchResourceStop
         if self.path.exists():
-            raise SearchResourceStop('REGION_VALIDATION_CONTRACT_STOP: prior failure retained; no new request')
+            stop = SearchResourceStop('REGION_VALIDATION_CONTRACT_STOP: prior failure retained; no new request')
+            stop.requires_reconciliation = True
+            raise stop
 
     def record(self, stage, detail):
         self.path.parent.mkdir(parents=True, exist_ok=True)

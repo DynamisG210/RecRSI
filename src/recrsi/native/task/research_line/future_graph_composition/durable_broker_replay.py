@@ -3,6 +3,7 @@ Uses v4 transport records and the shared API ledger."""
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import replace
+import fcntl
 import hashlib
 import io
 import json
@@ -59,7 +60,6 @@ def durable_broker_scope(broker_module, durability_module, api_ledger):
     original_call = cls.call_with_session
     original_replay = cls.replay_stored
     original_persist = durability_module.persist_paid_response
-    original_send_builder = durability_module.corrected_send
     sealed = WeakKeyDictionary()
     upstream = broker_module.urlrequest
 
@@ -92,19 +92,7 @@ def durable_broker_scope(broker_module, durability_module, api_ledger):
         immutable_json(binding_path(binding), dict(binding, call_id=call_id,
                        response_sha256=sha(raw)))
 
-    def send_builder(module):
-        send = original_send_builder(module)
-
-        async def admitted_send(self, request, timeout):
-            raw = await send(self, request, timeout)
-            # send has completed the original accounting and late-output gate.
-            path = binding_path(_binding.get())
-            immutable_json(path.with_suffix('.admitted.json'), json.loads(path.read_bytes()))
-            return raw
-
-        return admitted_send
-
-    def load_response(self, binding, identity):
+    def load_response(binding, identity):
         path = binding_path(binding)
         if not path.exists():
             return None
@@ -125,7 +113,9 @@ def durable_broker_scope(broker_module, durability_module, api_ledger):
                 or receipt.get('response_sha256') != sha(raw)
                 or receipt.get('model') != payload['model']):
             raise ValueError('Durable request/response receipt mismatch')
-        rows = [json.loads(line) for line in ledger.read_text().splitlines() if line.strip()]
+        with ledger.with_suffix('.lock').open('a+b') as lock:
+            fcntl.flock(lock, fcntl.LOCK_SH)
+            rows = [json.loads(line) for line in ledger.read_text().splitlines() if line.strip()]
         events = [row for row in rows if row.get('call_id') == call_id]
         successes = [row for row in events if row.get('event') == 'SUCCESS']
         usage = json.loads(raw).get('usage', {})
@@ -139,7 +129,12 @@ def durable_broker_scope(broker_module, durability_module, api_ledger):
         if (ledger.parent / 'late_provider_outputs' / (call_id + '.json')).exists():
             raise ValueError('Late provider output cannot enter native replay')
         admission = path.with_suffix('.admitted.json')
-        if not admission.exists() or json.loads(admission.read_bytes()) != record:
+        current_admission = root / (call_id + '.admitted')
+        if current_admission.exists():
+            admitted = current_admission.read_bytes() == sha(raw).encode()
+        else:
+            admitted = admission.exists() and json.loads(admission.read_bytes()) == record
+        if not admitted:
             raise ValueError('Original output admission unresolved; retain without redraw')
         return raw, record
 
@@ -173,7 +168,7 @@ def durable_broker_scope(broker_module, durability_module, api_ledger):
         immutable_json(binding_path(binding).with_suffix('.recovered.json'), dict(
             version=VERSION, original=record, real_http=0, new_accounting_events=0,
             receipt_kind='RECONSTRUCTED_NATIVE_CACHE_NOT_ORIGINAL_BROKER_RECEIPT'))
-        mark_replay(binding['request_digest'])
+        mark_replay(binding['request_digest'], json.loads(raw)['usage']['output_tokens'])
         return original_replay(self, logical_call_id=kwargs['logical_call_id'],
             proposal_generation_session_id=identity['proposal_generation_session_id'],
             request_digest=binding['request_digest'])
@@ -183,25 +178,32 @@ def durable_broker_scope(broker_module, durability_module, api_ledger):
         identity = seal(self, **args)
         binding = make_binding(self, kwargs['logical_call_id'], identity)
         # Preserve native success/failure behavior when its cache already exists.
-        if self._connection.execute('SELECT 1 FROM calls WHERE logical_call_id=?',
-                                    (kwargs['logical_call_id'],)).fetchone():
-            return original_call(self, **kwargs)
-        saved = load_response(self, binding, identity)
+        original_row = self._connection.execute(
+            'SELECT request_digest, proposal_generation_session_id, broker_release_digest FROM calls WHERE logical_call_id=?',
+            (kwargs['logical_call_id'],)).fetchone()
+        if original_row is not None:
+            if tuple(original_row) != (binding['request_digest'], identity['proposal_generation_session_id'],
+                                       self.release.release_digest):
+                return original_call(self, **kwargs)  # native mismatch diagnostic
+            return replay(self, logical_call_id=kwargs['logical_call_id'], request_digest=binding['request_digest'],
+                          proposal_generation_session_id=identity['proposal_generation_session_id'])
+        saved = load_response(binding, identity)
         if saved is not None:
             return recover(self, kwargs, identity, binding, saved)
         token = _binding.set(binding)
+        dispatch = durability_module.dispatch_key.set(binding_path(binding).stem)
         try:
             return original_call(self, **kwargs)
         finally:
+            durability_module.dispatch_key.reset(dispatch)
             _binding.reset(token)
 
     def replay(self, **kwargs):
-        if self._connection.execute('SELECT 1 FROM calls WHERE logical_call_id=?',
-                                    (kwargs['logical_call_id'],)).fetchone():
-            row = self._connection.execute('SELECT request_digest, proposal_generation_session_id '
-                'FROM calls WHERE logical_call_id=?', (kwargs['logical_call_id'],)).fetchone()
-            if row == (kwargs['request_digest'], kwargs['proposal_generation_session_id']):
-                mark_replay(kwargs['request_digest'])
+        row = self._connection.execute('SELECT request_digest, proposal_generation_session_id, output_tokens '
+            'FROM calls WHERE logical_call_id=?', (kwargs['logical_call_id'],)).fetchone()
+        if row is not None:
+            if tuple(row)[:2] == (kwargs['request_digest'], kwargs['proposal_generation_session_id']):
+                mark_replay(kwargs['request_digest'], row[2])
             return original_replay(self, **kwargs)
         args, identity = sealed.get(self, (None, None))
         if args is None:
@@ -210,21 +212,21 @@ def durable_broker_scope(broker_module, durability_module, api_ledger):
         if (kwargs['request_digest'] != binding['request_digest']
                 or kwargs['proposal_generation_session_id'] != binding['proposal_generation_session_id']):
             raise ValueError('Replay differs from native sealed request')
-        saved = load_response(self, binding, identity)
+        saved = load_response(binding, identity)
         if saved is None:
             return original_replay(self, **kwargs)
         return recover(self, dict(args, logical_call_id=kwargs['logical_call_id']),
                        identity, binding, saved)
 
-    def mark_replay(digest):
+    def mark_replay(digest, output_tokens):
         replays = _native_replays.get()
         if replays is not None:
-            replays.add(digest)
+            replays[digest] = output_tokens
 
     def bounded(**kwargs):
         # fresh_r1 otherwise reads historical failure usage from SQLite and
         # reports it as a new bill, even though replay_stored charged zero.
-        replays = set()
+        replays = {}
         token = _native_replays.set(replays)
         try:
             result = original_bounded(**kwargs)
@@ -244,6 +246,7 @@ def durable_broker_scope(broker_module, durability_module, api_ledger):
                 row[k] = 0
             row['usage_charge_basis'] = 'STORED_PAID_REPLAY_NO_NEW_CHARGE'
             row['durable_response_replay'] = True
+            row['original_role_output_tokens'] = replays[row['request_digest']]
             return row
 
         return replace(result, attempts=tuple(zero_new_usage(x) for x in result.attempts),
@@ -256,7 +259,5 @@ def durable_broker_scope(broker_module, durability_module, api_ledger):
          patch.object(cls, 'replay_stored', replay), \
          patch.object(broker_module, 'urlrequest', proxy), \
          patch.object(fresh_r1, '_bounded_provider_call_direct', bounded), \
-         patch.object(durability_module, 'persist_paid_response', persist), \
-         patch.object(durability_module, 'corrected_send', send_builder), \
-         durability_module.durable_transport_scope():
+         patch.object(durability_module, 'persist_paid_response', persist):
         yield

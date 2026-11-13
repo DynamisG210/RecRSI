@@ -17,9 +17,6 @@ def main():
     import owned_evaluator
     owned_evaluator.install()
     import continuation_binding
-    if json.loads(Path(config['binding']).read_bytes())['line']=='lightgcn':
-        from plain_worker_line import install
-        install(continuation_binding)
     with continuation_binding.evaluator_scope(evaluator,branch/'future_graph_composition/graph_checkpoint_verify.py'):
         importlib.import_module(entry.stem).main()
 

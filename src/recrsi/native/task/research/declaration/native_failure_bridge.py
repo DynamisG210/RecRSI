@@ -7,7 +7,7 @@ import hashlib
 import json
 from pathlib import Path
 import sqlite3
-from declaration_provider_v2 import digest
+from declaration_provider_v3 import digest
 
 
 class NativeFailureBridge:
@@ -16,7 +16,7 @@ class NativeFailureBridge:
         self.frozen_session_id = frozen_session_id
         self.root = Path(completion.settings["resource_root"]).resolve()
 
-    def resolve(self, result, *, call_root, wire_bytes, response_bytes):
+    def resolve(self, result, *, call_root, wire_bytes, response_bytes, require_proposal_count=True):
         if result.call is not None:
             return None  # already successful native calls never need completion
         if (result.failure or {}).get("failure_class") != "SCHEMA_VALIDATION_FAILURE":
@@ -48,11 +48,13 @@ class NativeFailureBridge:
                 receipt["request_digest"] != row["request_digest"]):
             raise ValueError("Sealed request and persisted native failure do not join")
         detail = json.loads(row["error_detail_json"])
-        original = json.loads(detail["original_response_content"])
+        from recclaw_core.experiments.helix_abc_v1.lab_api_broker import (
+            _provider_json_content, responses_final_text,
+        )
+        original = json.loads(_provider_json_content(detail["original_response_content"]))
         envelope = json.loads(response_bytes)
-        texts = [part["text"] for item in envelope.get("output",[]) if item.get("type")=="message"
-                 for part in item.get("content",[]) if part.get("type")=="output_text"]
-        if len(texts)!=1 or json.loads(texts[0])!=original or envelope.get("model")!=row["returned_model"]:
+        if (json.loads(_provider_json_content(responses_final_text(envelope))) != original
+                or envelope.get("model") != row["returned_model"]):
             raise ValueError("Original HTTP output and native failure payload differ")
         usage=envelope.get("usage",{})
         if any(usage.get(k)!=row[k] for k in ["input_tokens","output_tokens"]):
@@ -68,11 +70,14 @@ class NativeFailureBridge:
             if not isinstance(prompt,str) or prompt.count(marker)!=1:
                 raise ValueError("Original wire schema not uniquely available")
             schema=json.loads(prompt.split(marker)[1])
-        if len(original["proposals"])!=identity["expected_proposal_count"]:
+        proposals = original.get("proposals") if isinstance(original, dict) else None
+        if require_proposal_count and (
+                not isinstance(proposals, list) or len(proposals) != identity["expected_proposal_count"]):
             raise ValueError("Original proposal count differs")
         return dict(logical_call_id=row["logical_call_id"],session_id=session,original=original,
                     schema=schema,original_raw=response_bytes,
-                    original_failure={"native_receipt":receipt,"failure":result.failure,
+                    original_failure={"native_receipt":receipt,
+                        "native_outcome":json.loads(row["outcome_json"]),"native_error_detail":detail,
                         "native_database_sha256":hashlib.sha256(db.read_bytes()).hexdigest(),
                         "original_paid_call_id":paid[0]["call_id"]})
 

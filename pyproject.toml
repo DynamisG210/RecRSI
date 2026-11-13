@@ -10,7 +10,7 @@ readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md"]
 requires-python = ">=3.10,<3.12"
-dependencies = ["jsonschema[format-nongpl]==4.26.0", "rfc8785==0.1.4", "numpy==1.26.4", "PyYAML>=6", "httpx>=0.27,<1"]
+dependencies = ["jsonschema[format-nongpl]==4.26.0", "rfc8785==0.1.4", "numpy==1.26.4", "PyYAML>=6", "httpx>=0.27,<1", "tiktoken==0.14.0"]
 
 [project.optional-dependencies]
 train = ["torch==2.10.0", "recbole @ https://codeload.github.com/RUCAIBox/RecBole/zip/7b02be5ec80a88310f2d04a27a82adfcbb5dc211", "scipy==1.15.3", "pandas>=2,<3", "kmeans-pytorch==0.3"]

@@ -201,6 +201,55 @@ class LabApiResponseContractError(ValueError):
         super().__init__(reason.value)
 
 
+def responses_final_text(envelope: Mapping[str, Any]) -> str:
+    """Read the single final text of a Responses envelope."""
+    output = envelope.get("output")
+    if not isinstance(output, list):
+        raise LabApiResponseContractError(
+            LabApiResponseFailureReasonV1.RESPONSES_OUTPUT_SHAPE
+        )
+    messages = [
+        item
+        for item in output
+        if isinstance(item, Mapping) and item.get("type") == "message"
+    ]
+    # Responses can emit commentary before the structured final answer.
+    # Select by explicit phase, never by which payload happens to validate.
+    final_messages = [
+        item for item in messages if item.get("phase") == "final_answer"
+    ]
+    if final_messages:
+        if len(final_messages) != 1 or any(
+            item.get("phase") not in ("commentary", "final_answer")
+            for item in messages
+        ):
+            raise LabApiResponseContractError(
+                LabApiResponseFailureReasonV1.RESPONSES_MESSAGE_SHAPE
+            )
+        messages = final_messages
+    if len(messages) != 1 or messages[0].get("phase") == "commentary":
+        raise LabApiResponseContractError(
+            LabApiResponseFailureReasonV1.RESPONSES_MESSAGE_SHAPE
+        )
+    parts = messages[0].get("content")
+    if not isinstance(parts, list):
+        raise LabApiResponseContractError(
+            LabApiResponseFailureReasonV1.RESPONSES_CONTENT_SHAPE
+        )
+    output_text_parts = [
+        part.get("text")
+        for part in parts
+        if isinstance(part, Mapping)
+        and part.get("type") == "output_text"
+        and isinstance(part.get("text"), str)
+    ]
+    if len(output_text_parts) != 1:
+        raise LabApiResponseContractError(
+            LabApiResponseFailureReasonV1.RESPONSES_CONTENT_SHAPE
+        )
+    return output_text_parts[0]
+
+
 def _provider_json_content(content: str) -> str:
     """Return the JSON payload after one endpoint-emitted reasoning prefix.
 
@@ -1196,51 +1245,7 @@ class LabApiCanaryBrokerV1:
                     usage=self._best_effort_usage(envelope),
                     response_metadata={"response_status": str(response_status)},
                 )
-            output = envelope.get("output")
-            if not isinstance(output, list):
-                raise LabApiResponseContractError(
-                    LabApiResponseFailureReasonV1.RESPONSES_OUTPUT_SHAPE
-                )
-            messages = [
-                item
-                for item in output
-                if isinstance(item, Mapping) and item.get("type") == "message"
-            ]
-            # Responses can emit commentary before the structured final answer.
-            # Select by explicit phase, never by which payload happens to validate.
-            final_messages = [
-                item for item in messages if item.get("phase") == "final_answer"
-            ]
-            if final_messages:
-                if len(final_messages) != 1 or any(
-                    item.get("phase") not in ("commentary", "final_answer")
-                    for item in messages
-                ):
-                    raise LabApiResponseContractError(
-                        LabApiResponseFailureReasonV1.RESPONSES_MESSAGE_SHAPE
-                    )
-                messages = final_messages
-            if len(messages) != 1 or messages[0].get("phase") == "commentary":
-                raise LabApiResponseContractError(
-                    LabApiResponseFailureReasonV1.RESPONSES_MESSAGE_SHAPE
-                )
-            parts = messages[0].get("content")
-            if not isinstance(parts, list):
-                raise LabApiResponseContractError(
-                    LabApiResponseFailureReasonV1.RESPONSES_CONTENT_SHAPE
-                )
-            output_text_parts = [
-                part.get("text")
-                for part in parts
-                if isinstance(part, Mapping)
-                and part.get("type") == "output_text"
-                and isinstance(part.get("text"), str)
-            ]
-            if len(output_text_parts) != 1:
-                raise LabApiResponseContractError(
-                    LabApiResponseFailureReasonV1.RESPONSES_CONTENT_SHAPE
-                )
-            content = output_text_parts[0]
+            content = responses_final_text(envelope)
         else:
             choices = envelope.get("choices")
             if not isinstance(choices, list) or len(choices) != 1:

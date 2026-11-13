@@ -6,8 +6,31 @@ import os
 from pathlib import Path
 import sys
 from unittest.mock import patch
+from graph_autospace import canonical
 
 HERE=Path(__file__).resolve().parent
+
+
+def common_prompt(prompt, facts, corpus, budget):
+    from source_bound_context import MARKER
+    facts_text = canonical(facts).decode()
+    start = prompt.find(MARKER)
+    if start != -1:
+        body = prompt[start + len(MARKER):].lstrip()
+        try:
+            context, _ = json.JSONDecoder().raw_decode(body)
+            projected = context['objective']['space']['task']
+            if all(key in projected and canonical(projected[key]) == canonical(value)
+                   for key, value in facts.items()):
+                facts_text = 'See objective.space.task in the Research Context above.'
+        except (ValueError, TypeError, KeyError):
+            pass
+    return (
+        prompt + '\nCommon original graph facts:\n' + facts_text
+        + '\nCommon literature:\n' + canonical(corpus).decode()
+        + '\nActual API budget:\n' + canonical(budget).decode()
+    )
+
 
 def configure(inputs):
     config=inputs['evaluator'];provider=inputs['provider']
@@ -49,7 +72,8 @@ def research_config(inputs):
         timeout_seconds=config['worker_timeout_seconds'],watchdog_seconds=config['worker_timeout_seconds'],final_worker_ceiling_seconds=config['worker_timeout_seconds'],
         cuda_visible_devices=config['gpu_uuid'],research_mode='portfolio',native_resource_observation=True,
         round_count=MAX_STANDALONE_ROUNDS,observation_seed_schedule=(config['train_seed'],)*MAX_STANDALONE_ROUNDS,
-        attempt_scheduler=True,max_attempts_per_round=1,implementation_total_token_ceiling_per_call=148000,
+        attempt_scheduler=True,max_attempts_per_round=1,provider_maximum_physical_attempts=1,
+        implementation_total_token_ceiling_per_call=148000,
         proposal_output_token_ceiling_total_per_slot=20000,implementation_output_token_ceiling_total_per_candidate=80000,
         evaluator=GRAPH_EVALUATOR,split=GRAPH_SPLIT,frozen_profile_ref=profile,protocol_ref=protocol_ref,protocol_digest=protocol_digest,
         protocol_requirements=REQUIREMENTS,compatibility_requirements=REQUIREMENTS,available_dependencies=DEPENDENCIES,
@@ -79,7 +103,7 @@ def execute(inputs,resources):
                 budget=dict(total_api_budget_usd=7,total_recorded_spent_usd=api['normalized_cost_usd'],
                     remaining_api_budget_usd=max(0,7-api['normalized_cost_usd']),scope='Fresh AutoSpace plus search share MAIN budget')
                 freeze(path,budget)
-            kwargs['prompt']+='\nCommon original graph facts:\n'+json.dumps(inputs['facts'],ensure_ascii=False)+'\nCommon literature:\n'+json.dumps(inputs['corpus'],ensure_ascii=False)+'\nActual API budget:\n'+json.dumps(budget)
+            kwargs['prompt'] = common_prompt(kwargs['prompt'], inputs['facts'], inputs['corpus'], budget)
             return native_call(**include_schema(kwargs))
         with graph_materializer_abi(),patch.object(LabApiCanaryBrokerV1,'sealed_request_identity',identity):
             composition=compose_standalone_campaign(native_config,provider_call=provider_call,launch=GraphROExecution(config),
@@ -87,7 +111,14 @@ def execute(inputs,resources):
             policy=FrozenSearchPolicy(composition).install()
             try: rounds=composition.run()
             finally:policy.close()
-    return dict(status='NATIVE_RETURNED',returned_rounds=len(rounds),native_state_ref=str(native_config.run_root/'CAMPAIGN_STATE.json'))
+    result = dict(status='NATIVE_RETURNED', returned_rounds=len(rounds),
+                  native_state_ref=str(native_config.run_root/'CAMPAIGN_STATE.json'))
+    if rounds:
+        last_round = rounds[-1]
+        if (last_round.status == 'INCOMPLETE'
+                and last_round.state_before.next_round_index == last_round.state_after.next_round_index):
+            result.update(status='NATIVE_INCOMPLETE', reason=last_round.result.incomplete_reason)
+    return result
 
 def main():
     parser=argparse.ArgumentParser()
@@ -108,8 +139,18 @@ def main():
     with launch_state(Path(inputs['launch']['output']),inputs['hashes']) as completed:
         if completed is not None:print_result(inputs,completed);return
         root,carrier,resources,ledger=initialize_runtime(inputs)
-        try:result=execute(inputs,resources)
-        except SearchResourceStop as error:result=dict(status='RESOURCE_STOP',reason=str(error))
+        try:
+            from graph_candidate_evaluator import run_program
+            run_program(inputs['evaluator'])
+            result=execute(inputs,resources)
+        except SearchResourceStop as error:
+            result=dict(status='RESOURCE_STOP',reason=str(error))
+            if hasattr(error, 'transport_interruption'):
+                result['transport_interruption'] = error.transport_interruption
+            if getattr(error, 'requires_reconciliation', False):
+                result['status'] = 'NATIVE_INCOMPLETE'
+            if getattr(error, 'retryable_interruption', False):
+                result['status'] = 'RETRYABLE_INTERRUPTION'
         except Exception as error:
             import traceback
             (root/'EXECUTION_ERROR.log').write_text(traceback.format_exc())

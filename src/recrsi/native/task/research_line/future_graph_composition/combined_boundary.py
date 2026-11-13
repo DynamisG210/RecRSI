@@ -1,10 +1,8 @@
 """Compose graph research policies within one campaign scope."""
 from contextlib import contextmanager
 import hashlib
-import inspect
 import json
 from pathlib import Path
-import textwrap
 from unittest.mock import patch
 
 VERSION = 'graph-native-boundary-score-choice-replay-v1'
@@ -75,18 +73,3 @@ def combined_scope(api_ledger, directory):
          graph_program_choice_scope(), \
          durable_broker_scope(lab_api_broker, transport_durability, api_ledger):
         yield namespace
-
-
-def bind_native_execute(execute, scope_factory):
-    """Add scope at the actual native inner boundary, leaving the body intact.
-
-    The future launcher must supply its own version-pinned baseline execute and
-    original limits. This helper neither loads nor resumes any old campaign.
-    """
-    source = textwrap.dedent(inspect.getsource(execute))
-    if source.count(INNER_BOUNDARY) != 1:
-        raise ValueError('Review changed native graph composition boundary')
-    changed = source.replace(INNER_BOUNDARY, INNER_BOUNDARY[:-1] + ',_future_graph_scope():')
-    namespace = dict(execute.__globals__, _future_graph_scope=scope_factory)
-    exec(compile(changed, inspect.getsourcefile(execute), 'exec'), namespace)
-    return namespace[execute.__name__]

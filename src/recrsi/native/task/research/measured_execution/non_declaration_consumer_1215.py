@@ -6,8 +6,7 @@ import hashlib
 import json
 from pathlib import Path
 
-from declaration_provider_v3 import DeclarationProvider, CompletionPending, ScientificCompletionFailed
-from declaration_provider_v2 import digest
+from declaration_provider_v3 import DeclarationProvider, CompletionPending, ScientificCompletionFailed, digest
 from native_failure_bridge import NativeFailureBridge
 
 
@@ -125,14 +124,24 @@ class CampaignDeclarationConsumer:
             if eligible:
                 from jsonschema import Draft202012Validator
                 evidence = self._evidence(result)
-                args = self.bridge.resolve(result, **evidence)
-                errors = list(Draft202012Validator(args['schema']).iter_errors(args['original']))
-                eligible = bool(errors) and all(
-                    error.validator == 'required'
-                    and error.message == "'compatibility_requirements' is a required property"
-                    and len(error.path) == 2 and list(error.path)[0] == 'proposals'
-                    and type(list(error.path)[1]) is int
-                    for error in errors)
+                # Bind the paid response even when its proposal count is
+                # invalid. Only the original declaration repair is eligible.
+                args = self.bridge.resolve(result, require_proposal_count=False, **evidence)
+                original = args['original']
+                errors = list(Draft202012Validator(args['schema']).iter_errors(original))
+                proposals = original.get('proposals') if isinstance(original, dict) else None
+                eligible = (
+                    isinstance(proposals, list)
+                    and len(proposals) == result.sealed_request['expected_proposal_count']
+                    and bool(errors)
+                    and all(
+                        error.validator == 'required'
+                        and error.message == "'compatibility_requirements' is a required property"
+                        and len(error.path) == 2 and list(error.path)[0] == 'proposals'
+                        and type(list(error.path)[1]) is int
+                        for error in errors
+                    )
+                )
             if not eligible: return original_finalize(owner, **kwargs)
             key=(id(owner),kwargs['budget_key'],result.sealed_request['logical_call_id'])
             wrapped=self.consumed.get(id(result))

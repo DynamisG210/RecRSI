@@ -63,13 +63,21 @@ training, checkpoint reload, and cost settlement. Its `BOUNDARY.json` and
 Create a private text file, mode 600, outside the repository and worker roots:
 
 ```text
-base_url: https://YOUR_ENDPOINT/v1
-api_key: YOUR_KEY
+base_url = "https://YOUR_ENDPOINT/v1"
+api_key = "YOUR_KEY"
 ```
 
 Set `api_config` to its path. The released method profile uses model identities
 `gpt-5.6-luna` and `gpt-5.6-terra` through Responses and chat-completions. These
 are the configured experiment identities; the endpoint must serve them.
+
+Initialize the controller's tokenizer cache before the first research run.
+This downloads the tokenizer vocabulary once and makes no model request.
+
+```bash
+export TIKTOKEN_CACHE_DIR="$HOME/.cache/recrsi/tiktoken"
+python -c 'import tiktoken; tiktoken.get_encoding("o200k_base")'
+```
 Request/response bytes, actual returned model metadata, token counts, and
 reference costs are saved in each run. Reference rates are fixed accounting
 inputs: luna input/output 0.2/1.2 and terra 2/12 USD per million tokens.
@@ -80,4 +88,4 @@ inputs: luna input/output 0.2/1.2 and terra 2/12 USD per million tokens.
 - Namespace or cgroup error: inspect `doctor` output and the baseline worker log; configure the host before launching search.
 - Baseline mismatch: retain the measured files together; changing data, source, seed, or training recipe requires a new project and baseline.
 - Resource busy: let the current holder finish, then rerun the command. Use the same lock directory across controllers.
-- Interrupted search: inspect `PAUSED.json` and the existing ledgers before `run --resume`; completed results stay in the original run.
+- Interrupted search: use `run --resume` after a controller interruption or an `INTERRUPTED.json` receipt. The same prepared directory retains paid responses and completed work. `PAUSED.json` indicates that the original dispatch, worker, or execution state needs reconciliation first.

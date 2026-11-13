@@ -776,24 +776,14 @@ def load_json_text(text: str, *, label: str = "JSON text") -> Any:
 
 def extract_responses_api_scientific_response(raw_response: Mapping[str, Any]) -> dict[str, Any]:
     """Extract exactly one structured-output JSON object from a Responses API envelope."""
-
-    texts: list[str] = []
-    output = raw_response.get("output")
-    if isinstance(output, list):
-        for item in output:
-            if not isinstance(item, Mapping):
-                continue
-            content = item.get("content")
-            if not isinstance(content, list):
-                continue
-            for part in content:
-                if isinstance(part, Mapping) and isinstance(part.get("text"), str):
-                    texts.append(part["text"])
-    if len(texts) != 1:
-        raise AutoSpaceValidationError(
-            f"Responses API envelope must contain exactly one scientific JSON text, got {len(texts)}"
-        )
-    value = load_json_text(texts[0], label="provider scientific response")
+    from recclaw_core.experiments.helix_abc_v1.lab_api_broker import (
+        LabApiResponseContractError, responses_final_text,
+    )
+    try:
+        text = responses_final_text(raw_response)
+    except LabApiResponseContractError as error:
+        raise AutoSpaceValidationError(str(error)) from error
+    value = load_json_text(text, label="provider scientific response")
     if not isinstance(value, Mapping):
         raise AutoSpaceValidationError("provider scientific response must be a JSON object")
     return dict(value)

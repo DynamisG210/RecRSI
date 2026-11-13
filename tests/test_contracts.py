@@ -7,7 +7,7 @@ from recrsi.cli import readonly_inspection
 
 
 def selector():
-    p=Path(recrsi.__file__).parent/'native/task/research/measured_execution/measured_selector.py'
+    p=Path(recrsi.__file__).parent/'native/task/research/mechanism_contrast/measured_selector.py'
     spec=importlib.util.spec_from_file_location('selector_test',p)
     module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
     return module

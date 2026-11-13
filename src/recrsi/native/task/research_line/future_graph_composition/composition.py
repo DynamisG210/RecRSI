@@ -106,8 +106,6 @@ def bind_execute(execute, directory, api_ledger, evidence, *, outer=True):
     source = textwrap.dedent(inspect.getsource(execute))
     replacements = {
         INNER_BOUNDARY: INNER_BOUNDARY[:-1] + ',_full_inner_scope():',
-        'total_api_budget_usd=7': 'total_api_budget_usd=7',
-        'max(0,7-api': 'max(0,7-api',
         'if path.exists(): budget=json.loads(path.read_bytes())':
             "if path.exists(): budget={key:json.loads(path.read_bytes())[key] for key in ('total_api_budget_usd','total_recorded_spent_usd','remaining_api_budget_usd','scope')}",
     }

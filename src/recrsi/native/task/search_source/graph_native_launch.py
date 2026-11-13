@@ -46,8 +46,6 @@ def initialize_runtime(inputs, *, marked=False):
     resources = resources_for(evaluator)
     ledger = EvaluationLedger(root / 'EVALUATION_LEDGER.json',
                               root_sha256=inputs['root_sha256'], identity=evaluator['run_identity'])
-    from graph_candidate_evaluator import run_program
-    run_program(evaluator)
     return root, carrier, resources, ledger
 
 
@@ -66,13 +64,17 @@ def settle_result(inputs, result, resources, ledger):
     api = resources.api.summary()
     result = dict(result, genuine_count=state['genuine_count'], common_winner=state['winner'],
                   api=api, test_accessed=False, input_hashes=inputs['hashes'])
-    reason = str(result.get('reason', '')).lower()
-    interrupted = (api.get('unheld_unknown_usage_failures') or api.get('fatal_provider_statuses')
-                   or any(word in reason for word in
-                          ('interrupted', 'unsettled', 'unresolved', 'external', 'transport')))
-    if interrupted:
-        result['status'] = 'PAUSED_REQUIRES_ORIGINAL_STATE_RECONCILIATION'
-        target = 'PAUSED.json'
+    unsettled = (api.get('unheld_unknown_usage_failures') or api.get('fatal_provider_statuses')
+                 or api.get('open_reservations') or state.get('pending'))
+    if (unsettled or result.get('transport_interruption')
+            or result['status'] in {'EXECUTION_ERROR', 'NATIVE_INCOMPLETE', 'RETRYABLE_INTERRUPTION'}):
+        result['interrupted_status'] = result['status']
+        if result['status'] == 'RETRYABLE_INTERRUPTION' and not unsettled:
+            result['status'] = 'INTERRUPTED_RETRY_WITH_RESUME'
+            target = 'INTERRUPTED.json'
+        else:
+            result['status'] = 'PAUSED_REQUIRES_ORIGINAL_STATE_RECONCILIATION'
+            target = 'PAUSED.json'
     else:
         target = 'RESULT.json'
     write_json(Path(inputs['launch']['output']) / target, result)
@@ -82,3 +84,5 @@ def settle_result(inputs, result, resources, ledger):
 def print_result(inputs, result):
     print(json.dumps(dict(status=result['status'], genuine_count=result['genuine_count'],
                           output=inputs['launch']['output'])))
+    if result['status'] in {'PAUSED_REQUIRES_ORIGINAL_STATE_RECONCILIATION', 'INTERRUPTED_RETRY_WITH_RESUME'}:
+        raise SystemExit(1)

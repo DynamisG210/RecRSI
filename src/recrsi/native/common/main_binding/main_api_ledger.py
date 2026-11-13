@@ -44,6 +44,10 @@ class MainApiLedger(ApiLedger):
             self.model_prices.update(auxiliary_model_prices)
         self._lock = _ProcessLock(self.path.with_suffix('.lock'))
 
+    def events(self):
+        with self._lock:
+            return super().events()
+
     @staticmethod
     def _reserved_usd(events):
         calls={}
@@ -98,16 +102,25 @@ class MainApiLedger(ApiLedger):
                 usage_reported=False, accounting_basis='CONFIRMED_EMPTY_RELAY_BEFORE_RETRY',
                 evidence=evidence))
 
-    def reserve(self, *, channel, label, model, requests=1, estimated_input_tokens=None):
+    def reserve(self, *, channel, label, model, requests=1, estimated_input_tokens=None,
+                max_output_tokens=None, dispatch_key=None):
         if requests != 1 or type(estimated_input_tokens) is not int or estimated_input_tokens < 0:
             raise ValueError('MAIN reserves one concrete model request with measured input estimate')
         prices=self.model_prices[model]
         input_bound=estimated_input_tokens+self.input_estimate_margin
         if input_bound>self.max_input_tokens:
             raise BudgetExhausted('MAIN request exceeds the unchanged context allowance')
-        reserved_usd=(input_bound*prices['input']+self.max_output_tokens*prices['output'])/1_000_000
+        output_bound = self.max_output_tokens if max_output_tokens is None else max_output_tokens
+        if type(output_bound) is not int or not 0 < output_bound <= self.max_output_tokens:
+            raise ValueError('MAIN request output ceiling exceeds the shared allowance')
+        reserved_usd=(input_bound*prices['input']+output_bound*prices['output'])/1_000_000
         with self._lock:
             events=self.events();summary=self._summarize(events)
+            if dispatch_key is not None:
+                empty = {e['call_id'] for e in events if e['event'] == 'EXTERNAL_EMPTY_STOP'}
+                if any(e['event'] == 'RESERVED' and e.get('dispatch_key') == dispatch_key
+                       and (e['call_id'] not in empty or e['label'] != label) for e in events):
+                    raise ProviderExecutionPaused('Original provider dispatch requires reconciliation')
             if summary['fatal_provider_statuses'] or summary['unheld_unknown_usage_failures']:
                 raise ProviderExecutionPaused('MAIN retains unresolved/fatal provider state; no silent refund')
             if summary['requests']+1>self.max_requests:
@@ -121,6 +134,7 @@ class MainApiLedger(ApiLedger):
             self._append_unlocked(dict(schema=SCHEMA,event='RESERVED',call_id=call_id,
                 channel=channel,label=label,model=model,timestamp_ns=time.time_ns(),requests=1,
                 input_tokens=0,output_tokens=0,estimated_input_tokens=estimated_input_tokens,
+                max_output_tokens=output_bound,dispatch_key=dispatch_key,
                 reserved_reference_usd=reserved_usd,usage_reported=False,elapsed_seconds=None,
                 error_type=None,error_digest=None))
             return call_id

@@ -155,7 +155,10 @@ def attach(adapter, evidence_dir):
             binding_path = Path(adapter.config['binding'])
             binding_bytes = binding_path.read_bytes()
             binding = json.loads(binding_bytes)
-            task_facts = {k:binding[k] for k in ('dataset','task_id','train_seed','common_protocol_sha256')}
+            task_facts = dict(dataset=binding['dataset'], task_id=binding['task_id'],
+                              train_seed=adapter.config['train_seed'])
+            if 'common_protocol_sha256' in binding:
+                task_facts['common_protocol_sha256'] = binding['common_protocol_sha256']
             task_facts['binding_sha256'] = hashlib.sha256(binding_bytes).hexdigest()
             task_facts['authority'] = 'FROZEN_EXECUTION_BINDING_NOT_LEGACY_DISPLAY'
             ledger = json.loads((output/'EVALUATION_LEDGER.json').read_bytes())

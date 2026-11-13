@@ -15,8 +15,14 @@ def install():
                 from resource_stop import SearchResourceStop
                 current=json.loads((self.path.parent/'campaign/CAMPAIGN_STATE.json').read_bytes())['state']['next_round_index']
                 for row in map(json.loads,self.journal.read_text().splitlines()):
-                    if row['round_index']>=current:raise SearchResourceStop('SCHEMA_CONTINUATION_NATIVE_FAILURE_NOT_SETTLED')
-                    settled_trace(self.path.parent,row['round_index'],row['detail']['logical_call_id'])
+                    # Let the current round finish its scheduled roles. Its
+                    # paid rejection is classified by the native campaign.
+                    if row['round_index'] < current:
+                        settled_trace(self.path.parent,row['round_index'],row['detail']['logical_call_id'])
+                    elif row['round_index'] > current:
+                        stop = SearchResourceStop('SCHEMA_CONTINUATION_NATIVE_FAILURE_NOT_SETTLED')
+                        stop.requires_reconciliation = True
+                        raise stop
         def record(self,stage,detail):
             if stage!='provider_schema':return super().record(stage,detail)
             assert detail['failure_class']=='SCHEMA_VALIDATION_FAILURE'

@@ -73,9 +73,16 @@ def adapter_class(base,original):
         def build_provider_research_producer(self,**kwargs):
             wrapped=super().build_provider_research_producer(**kwargs)
             producer=wrapped._producer;old_call=producer._call;old_provider=producer.provider_call
+            # This producer authors two complete programs. Reserve 3k of the
+            # existing role total for selection instead of inheriting the
+            # compact single-proposal ceiling.
+            producer.proposal_output_token_ceiling_per_physical_call = (
+                producer.proposal_output_token_ceiling_total_per_context - 3000
+            )
             generation={}
             def provider_call(**options):
-                options=dict(options,output_token_ceiling=min(options['output_token_ceiling'],17000))
+                options=dict(options,output_token_ceiling=min(
+                    options['output_token_ceiling'], producer.proposal_output_token_ceiling_per_physical_call))
                 generation['options']=dict(options)
                 result=old_provider(**options);generation['result']=result
                 return result
@@ -109,7 +116,7 @@ def adapter_class(base,original):
                     contrasts=program_contrasts(self,commit,context)
                     save_once(root/'PROSPECTIVE_SOURCE_CONTRASTS.json',contrasts)
                     visible={'own_context':context,'committed_programs':commit['programs'],'exact_parent_program_contrasts':contrasts}
-                    selector_prompt=INSTRUCTION+'\n'+json.dumps(visible,ensure_ascii=True,sort_keys=True)
+                    selector_prompt=INSTRUCTION+'\n'+json.dumps(visible,ensure_ascii=True,sort_keys=True,separators=(',',':'))
                     ids=[r['candidate_id'] for r in commit['programs']]
                     save_once(root/'SCHEMA.json',schema(ids))
                     # Original per-context total includes generator, declaration completion and selector.

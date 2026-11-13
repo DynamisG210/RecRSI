@@ -462,7 +462,7 @@ def _stored_provider_request_replay(
     logical_call_id: str,
     session_id: str,
 ) -> tuple[bool, str | None]:
-    """Return whether a broker started and its unique clean success, if any."""
+    """Return whether a broker started and the digest of a replayable outcome."""
 
     databases = tuple(
         sorted(call_root.glob("physical_attempt_*/broker.sqlite3"))
@@ -486,7 +486,7 @@ def _stored_provider_request_replay(
         )
         try:
             rows = connection.execute(
-                "SELECT request_digest, status FROM calls "
+                "SELECT request_digest, status, error_type FROM calls "
                 "WHERE logical_call_id=? "
                 "AND proposal_generation_session_id=?",
                 (logical_call_id, session_id),
@@ -494,8 +494,10 @@ def _stored_provider_request_replay(
             request_started = request_started or bool(rows)
             request_digests.update(
                 str(request_digest)
-                for request_digest, status in rows
-                if status == "SUCCESS"
+                for request_digest, status, error_type in rows
+                if status == "SUCCESS" or (
+                    status == "FAILED" and error_type == "SCHEMA_VALIDATION_FAILURE"
+                )
             )
         finally:
             connection.close()
@@ -504,21 +506,6 @@ def _stored_provider_request_replay(
             "stored Provider replay has conflicting request identities"
         )
     return request_started, next(iter(request_digests), None)
-
-
-def _stored_success_request_digest(
-    call_root: Path,
-    *,
-    logical_call_id: str,
-    session_id: str,
-) -> str | None:
-    """Return the unique clean durable success for an already-started request."""
-
-    return _stored_provider_request_replay(
-        call_root,
-        logical_call_id=logical_call_id,
-        session_id=session_id,
-    )[1]
 
 
 def load_provider_proposal_replay(
@@ -1730,7 +1717,7 @@ def _physical_attempt_output_tokens(
     result: fresh_r1.ProviderAttemptResult,
 ) -> int:
     return sum(
-        int(attempt.get("output_tokens") or 0)
+        int(attempt.get("original_role_output_tokens", attempt.get("output_tokens")) or 0)
         for attempt in result.attempts
         if isinstance(attempt, Mapping)
     )

@@ -4,8 +4,7 @@ from contextlib import contextmanager
 import hashlib,json
 from pathlib import Path
 from campaign_declaration_consumer import CampaignDeclarationConsumer
-from declaration_provider_v3 import CompletionPending
-from declaration_provider_v2 import digest
+from declaration_provider_v3 import CompletionPending, digest
 from se_shared_api_ledger import ProviderExecutionPaused
 
 class DeclarationCampaignPending(BaseException):

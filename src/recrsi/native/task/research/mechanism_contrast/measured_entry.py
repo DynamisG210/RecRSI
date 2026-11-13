@@ -37,7 +37,7 @@ def main():
         install_schema()
 
         from recclaw_core.research_line import standalone
-        import source_bound_context,counterproposal_decision,ro_main_provider
+        import source_bound_context,counterproposal_decision
         import measured_context,measured_selector
         measured_context.install(source_bound_context)
         original_choice=measured_selector.load_original(B/'counterproposal_decision.py')
@@ -49,7 +49,7 @@ def main():
         original_run=standalone.StandaloneResearchComposition.run
         consumer=N/f'repeat{args.repeat:02d}/CONSUMER_MANIFEST.json'
         def run(c,*a,**kw):
-            with campaign_scope(c,consumer,sha(consumer),ro_main_provider):return original_run(c,*a,**kw)
+            with campaign_scope(c,consumer,sha(consumer)):return original_run(c,*a,**kw)
         from pilot_limits import pilot_scope
         with patch.object(counterproposal_decision,'adapter_class',lambda base:measured_selector.adapter_class(base,original_choice)),\
              patch.object(standalone,'compose_standalone_campaign',compose),\

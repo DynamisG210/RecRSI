@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 
 from declaration_provider_v3 import DeclarationProvider, CompletionPending, ScientificCompletionFailed
-from declaration_provider_v2 import digest
+from declaration_provider_v3 import digest
 from native_failure_bridge import NativeFailureBridge
 
 

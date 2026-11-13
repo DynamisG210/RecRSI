@@ -14,12 +14,10 @@ def install_conservative_ledger():
     MainApiLedger._current_resource_policy=True
 
 @contextmanager
-def campaign_scope(composition,manifest,manifest_sha,transport_module):
+def campaign_scope(composition,manifest,manifest_sha):
     from recclaw_core.research_line import provider
     from campaign_manifest_consumer import ManifestCampaignConsumer
-    from manifest_round_owner import ManifestRoundOwner
-    from campaign_round_owner import PendingRound
-    from native_provider_capture import capture_native_transport
+    from campaign_round_owner import DeclarationRoundOwner, PendingRound
     class ReservedConsumer(ManifestCampaignConsumer):
         def _consume(self,owner,budget_key,result,native_outputs):
             total=owner.proposal_output_token_ceiling_total_per_context
@@ -28,7 +26,7 @@ def campaign_scope(composition,manifest,manifest_sha,transport_module):
                 return super()._consume(owner,budget_key,result,native_outputs)
     consumer=ReservedConsumer.from_manifest(manifest,expected_sha256=manifest_sha)
     campaign=composition.campaign
-    owner=ManifestRoundOwner(campaign,consumer,provider);owner.transport_module=transport_module
+    owner=DeclarationRoundOwner(campaign,consumer,provider)
     cls=type(campaign);original=cls.run_round;inside=False
     def run(current,*args,**kw):
         nonlocal inside
@@ -40,14 +38,16 @@ def campaign_scope(composition,manifest,manifest_sha,transport_module):
             if not isinstance(result,PendingRound):return result
             root=consumer.bridge.root/'declaration_completions'
             states=[json.loads(p.read_bytes()) for p in root.glob('*/STATE.json')]
-            terminal=[s for s in states if s.get('status') in {'ACCOUNT_PAUSED','DISPATCH_UNSETTLED'}]
-            terminal += [s for s in states if s.get('status')=='ZERO_SEND_LEDGER_PENDING']
+            terminal = [s for s in states if s.get('status') in {
+                'ACCOUNT_PAUSED', 'DISPATCH_UNSETTLED', 'ZERO_SEND_LEDGER_PENDING',
+                'ZERO_SEND_CAPACITY_PENDING',
+            }]
             if terminal:
                 # Preserve same native STARTED boundary for evidence-led coordination.
                 # No auto account probing, blind dispatch or false legal budget completion.
                 save_once(campaign.root/'OWNER_EVIDENCE_REQUIRED.json',dict(states=terminal,
                     pending=result.record_path,automatic_retry=False))
-                raise SystemExit('Saved pending round requires dispatch/account evidence reconciliation')
+                raise RuntimeError('Saved pending round requires dispatch/account evidence reconciliation')
             retry=max([float(s.get('retry_not_before',0)) for s in states]+[0])
             time.sleep(min(60,max(5,retry-time.time())))
     # All timers remain raw. With no active-wall limit, excluding overlapping

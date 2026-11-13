@@ -194,7 +194,8 @@ class DeclarationProvider:
                     follow_redirects=False) as client:
                 try:
                     call_id = self.ledger.reserve(channel=self.channel, label=label,
-                        model=self.model, estimated_input_tokens=estimate)
+                        model=self.model, estimated_input_tokens=estimate,
+                        max_output_tokens=payload["max_output_tokens"])
                 except Exception as error:
                     state_write(attempt, status="ZERO_SEND_LEDGER_PENDING", error_type=type(error).__name__)
                     raise CompletionPending("Common ledger admission pending; no dispatch") from error
@@ -257,12 +258,8 @@ class DeclarationProvider:
         envelope=json.loads(cached.read_bytes())
         if envelope.get("status")!="completed" or envelope.get("model")!=self.model:
             raise ValueError("Completion status/model identity differs")
-        messages=[item for item in envelope.get("output",[]) if item.get("type")=="message"]
-        if len(messages)!=1 or len(messages[0].get("content",[]))!=1:
-            raise ValueError("Expected exactly one completion message")
-        content=messages[0]["content"][0]
-        if content.get("type")!="output_text":raise ValueError("Expected completion JSON text")
-        return json.loads(content["text"])
+        from recclaw_core.experiments.helix_abc_v1.lab_api_broker import responses_final_text
+        return json.loads(responses_final_text(envelope))
 
     def _record_infrastructure(self,call_id,physical,usage,status,error_type):
         with self.ledger._lock:

@@ -6,7 +6,9 @@ import jsonschema
 
 @contextmanager
 def preserve_schema_failures():
-    from recclaw_core.experiments.helix_abc_v1.lab_api_broker import LabApiCanaryBrokerV1 as Broker
+    from recclaw_core.experiments.helix_abc_v1.lab_api_broker import (
+        LabApiCanaryBrokerV1 as Broker, responses_final_text,
+    )
     from recclaw_core.research_line import provider
     parse, persist = Broker._parse_response, Broker._persist_failure
     require_success = provider._require_success
@@ -20,9 +22,7 @@ def preserve_schema_failures():
             # Parse reached schema validation, so original content shape has
             # already passed the broker. Never retain headers/config/keys.
             if getattr(self, 'wire_api', 'chat_completions') == 'responses':
-                content = next(p['text'] for item in envelope['output']
-                    if item.get('type') == 'message' for p in item['content']
-                    if p.get('type') == 'output_text' and isinstance(p.get('text'),str))
+                content = responses_final_text(envelope)
             else:
                 content = envelope['choices'][0]['message']['content']
                 if isinstance(content,list):
